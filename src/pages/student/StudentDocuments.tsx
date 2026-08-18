@@ -1,19 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { FileText, Upload, Download, Trash2, Eye, AlertCircle, CheckCircle2, Lock } from 'lucide-react';
+import { FileText, Upload, Download, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
-import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { Modal } from '../../components/ui/Modal';
 import { DocumentRecord } from '../../types';
 
 export const StudentDocuments: React.FC = () => {
-  const { profile, studentRecord } = useAuth();
+  const { profile, studentRecord, user } = useAuth();
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [allDocuments, setAllDocuments] = useState<DocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Upload modal state
@@ -23,33 +21,22 @@ export const StudentDocuments: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Direct storage file path tester (VULN-007)
-  const [testPath, setTestPath] = useState('');
-  const [testUrlResult, setTestUrlResult] = useState<string | null>(null);
-
   const loadDocuments = async () => {
-    if (!studentRecord?.id) {
+    if (!studentRecord?.id || !user) {
       setLoading(false);
       return;
     }
 
     try {
-      // 1. Fetch own documents
-      const { data: myDocs } = await supabase
+      // Secure V2: Query strictly owned documents
+      const { data: myDocs, error } = await supabase
         .from('documents')
-        .select('*, student:students(*, profile:profiles(*))')
+        .select('*')
         .eq('student_id', studentRecord.id)
         .order('created_at', { ascending: false });
 
+      if (error) throw error;
       setDocuments((myDocs as DocumentRecord[]) || []);
-
-      // 2. VULN-007 / VULN-008: Fetch all documents records (accessible due to permissive select RLS)
-      const { data: allDocs } = await supabase
-        .from('documents')
-        .select('*, student:students(*, profile:profiles(*))')
-        .order('created_at', { ascending: false });
-
-      setAllDocuments((allDocs as DocumentRecord[]) || []);
     } catch (err) {
       console.error('Error fetching documents:', err);
     } finally {
@@ -59,41 +46,42 @@ export const StudentDocuments: React.FC = () => {
 
   useEffect(() => {
     loadDocuments();
-  }, [studentRecord]);
+  }, [studentRecord, user]);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !profile || !studentRecord) return;
+    if (!file || !profile || !studentRecord || !user) return;
 
     setUploading(true);
     setStatusMessage(null);
 
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${studentRecord.id}/${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+      // Secure V2: File path prefixed with user's unique auth UUID (Fixes VULN-007)
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const filePath = `${user.id}/${Date.now()}-${cleanFileName}`;
 
-      // 1. Upload to Supabase Storage Bucket
+      // Upload to private bucket
       const { data: storageData, error: storageError } = await supabase.storage
         .from('student-documents')
-        .upload(fileName, file, {
+        .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false,
         });
 
       if (storageError) throw storageError;
 
-      // 2. Insert metadata into database
+      // Insert metadata into database
       const { error: dbError } = await supabase.from('documents').insert({
-        title: docTitle,
+        title: docTitle.trim(),
         file_path: storageData.path,
         file_size: file.size,
-        uploaded_by: profile.id,
+        uploaded_by: user.id,
         student_id: studentRecord.id,
       });
 
       if (dbError) throw dbError;
 
-      setStatusMessage({ type: 'success', text: 'Document uploaded successfully.' });
+      setStatusMessage({ type: 'success', text: 'Document uploaded securely.' });
       setDocTitle('');
       setFile(null);
       setUploadModalOpen(false);
@@ -105,9 +93,20 @@ export const StudentDocuments: React.FC = () => {
     }
   };
 
-  const getPublicFileUrl = (path: string) => {
-    const { data } = supabase.storage.from('student-documents').getPublicUrl(path);
-    return data.publicUrl;
+  // Secure V2: Generate short-lived signed URL for authorized access
+  const handleDownload = async (filePath: string) => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('student-documents')
+        .createSignedUrl(filePath, 60); // 60 seconds expiry
+
+      if (error) throw error;
+      if (data?.signedUrl) {
+        window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err: any) {
+      alert('Failed to generate secure download link: ' + err.message);
+    }
   };
 
   const handleDelete = async (doc: DocumentRecord) => {
@@ -131,7 +130,7 @@ export const StudentDocuments: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Student Documents</h1>
-          <p className="text-sm text-slate-500 mt-1">Upload and manage verification credentials and assignments</p>
+          <p className="text-sm text-slate-500 mt-1">Upload and securely manage your academic credentials and assignments</p>
         </div>
 
         <Button
@@ -164,7 +163,7 @@ export const StudentDocuments: React.FC = () => {
       )}
 
       {/* My Uploaded Documents */}
-      <Card title="My Uploaded Files" subtitle="Private documents stored for your student account">
+      <Card title="My Uploaded Files" subtitle="Encrypted and isolated in your private student storage vault">
         {documents.length === 0 ? (
           <EmptyState
             icon={FileText}
@@ -175,120 +174,41 @@ export const StudentDocuments: React.FC = () => {
           />
         ) : (
           <div className="divide-y divide-slate-100">
-            {documents.map((doc) => {
-              const downloadUrl = getPublicFileUrl(doc.file_path);
-              return (
-                <div key={doc.id} className="py-4 flex items-center justify-between first:pt-0 last:pb-0">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-                      <FileText className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="font-semibold text-sm text-slate-900">{doc.title}</h4>
-                      <p className="text-xs text-slate-400 font-mono mt-0.5">{doc.file_path}</p>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB • ` : ''}
-                        Uploaded: {new Date(doc.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
+            {documents.map((doc) => (
+              <div key={doc.id} className="py-4 flex items-center justify-between first:pt-0 last:pb-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
+                    <FileText className="w-5 h-5" />
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <a
-                      href={downloadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Download
-                    </a>
-                    <button
-                      onClick={() => handleDelete(doc)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div>
+                    <h4 className="font-semibold text-sm text-slate-900">{doc.title}</h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {doc.file_size ? `${(doc.file_size / 1024).toFixed(1)} KB • ` : ''}
+                      Uploaded: {new Date(doc.created_at).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleDownload(doc.file_path)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Secure Download
+                  </button>
+                  <button
+                    onClick={() => handleDelete(doc)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-      </Card>
-
-      {/* Storage Access Control Test Section (VULN-007) */}
-      <Card
-        title="Direct Storage Access Explorer"
-        subtitle="Test public / cross-tenant object access via direct storage path"
-      >
-        <div className="space-y-4 text-xs">
-          <p className="text-slate-600">
-            Enter any storage file key (e.g. uploaded by other students) to generate and test the direct object URL:
-          </p>
-
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={testPath}
-              onChange={(e) => setTestPath(e.target.value)}
-              placeholder="e.g. <other-student-uuid>/1700000000-assignment.pdf"
-              className="flex-1 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                if (testPath) {
-                  setTestUrlResult(getPublicFileUrl(testPath));
-                }
-              }}
-            >
-              Generate URL
-            </Button>
-          </div>
-
-          {testUrlResult && (
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
-              <span className="font-semibold text-slate-700 block mb-1">Generated Object URL:</span>
-              <a
-                href={testUrlResult}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-600 underline font-mono break-all hover:text-blue-800"
-              >
-                {testUrlResult}
-              </a>
-            </div>
-          )}
-
-          {/* Quick list of database document keys */}
-          {allDocuments.length > 0 && (
-            <div className="pt-3 border-t border-slate-100">
-              <span className="font-semibold text-slate-500 uppercase text-[10px] block mb-2">
-                Available Document File Keys in Database ({allDocuments.length})
-              </span>
-              <div className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-[11px]">
-                {allDocuments.map((d) => (
-                  <div key={d.id} className="flex items-center justify-between p-1.5 bg-white border rounded hover:bg-slate-50">
-                    <span className="truncate max-w-[250px]">{d.file_path}</span>
-                    <span className="text-slate-400">By: {d.student?.profile?.full_name || 'Student'}</span>
-                    <button
-                      onClick={() => {
-                        setTestPath(d.file_path);
-                        setTestUrlResult(getPublicFileUrl(d.file_path));
-                      }}
-                      className="text-blue-600 text-xs font-sans font-medium hover:underline ml-2"
-                    >
-                      Use Key
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </Card>
 
       {/* Upload Modal */}
@@ -338,7 +258,7 @@ export const StudentDocuments: React.FC = () => {
               isLoading={uploading}
               icon={Upload}
             >
-              Upload to Storage
+              Upload Securely
             </Button>
           </div>
         </form>

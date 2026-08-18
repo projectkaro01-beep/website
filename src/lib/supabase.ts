@@ -8,16 +8,4 @@ export const isSupabaseConfigured =
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// VULN-010: Controlled Security Misconfiguration (Debug state exposed globally for testing)
-if (typeof window !== 'undefined') {
-  (window as any).__APP_DEBUG__ = {
-    supabaseUrl,
-    version: '1.0.0-vulnerable-v1',
-    environment: 'hackathon-testing',
-    activeClient: supabase,
-    getTokens: async () => {
-      const { data } = await supabase.auth.getSession();
-      return data.session;
-    }
-  };
-}
+// Secure V2: Removed global window debug harnesses and client state exposure (Fixes VULN-010)

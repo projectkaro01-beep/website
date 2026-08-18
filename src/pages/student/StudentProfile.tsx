@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, Mail, Phone, Building, GraduationCap, Save, AlertCircle, CheckCircle2, Shield } from 'lucide-react';
+import { User, Mail, Phone, Save, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
@@ -11,13 +11,10 @@ export const StudentProfile: React.FC = () => {
 
   const [fullName, setFullName] = useState(profile?.full_name || '');
   const [phone, setPhone] = useState(profile?.phone || '');
-  const [department, setDepartment] = useState(studentRecord?.department || 'Computer Science');
-  const [semester, setSemester] = useState(studentRecord?.semester || 1);
-
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // VULN-006 & VULN-004: Direct object pass to update query
+  // Secure V2: Explicit whitelisting of editable fields (Fixes VULN-004 & VULN-006)
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!profile) return;
@@ -25,32 +22,19 @@ export const StudentProfile: React.FC = () => {
     setMessage(null);
 
     try {
-      // 1. Update Profile (Vulnerable to mass assignment if extra fields are attached)
-      const profileUpdatePayload: Record<string, any> = {
-        full_name: fullName,
-        phone: phone,
+      // Whitelist ONLY permitted editable user columns
+      const sanitizedPayload = {
+        full_name: fullName.trim(),
+        phone: phone.trim(),
         updated_at: new Date().toISOString(),
       };
 
       const { error: profError } = await supabase
         .from('profiles')
-        .update(profileUpdatePayload)
+        .update(sanitizedPayload)
         .eq('id', profile.id);
 
       if (profError) throw profError;
-
-      // 2. Update Student metadata
-      if (studentRecord) {
-        const { error: stuError } = await supabase
-          .from('students')
-          .update({
-            department,
-            semester: Number(semester),
-          })
-          .eq('id', studentRecord.id);
-
-        if (stuError) throw stuError;
-      }
 
       await refreshProfile();
       setMessage({ type: 'success', text: 'Profile updated successfully.' });
@@ -113,15 +97,15 @@ export const StudentProfile: React.FC = () => {
               <span className="font-medium text-slate-800">{studentRecord?.department || 'Computer Science'}</span>
             </div>
             <div>
-              <span className="text-slate-400 block uppercase font-semibold text-[10px]">User Identifier (UUID)</span>
-              <span className="font-mono text-[10px] text-slate-600 break-all">{profile?.id}</span>
+              <span className="text-slate-400 block uppercase font-semibold text-[10px]">Academic Status</span>
+              <span className="font-semibold text-emerald-600">Active Good Standing</span>
             </div>
           </div>
         </Card>
 
         {/* Right Edit Form */}
         <div className="md:col-span-2">
-          <Card title="Personal Information" subtitle="Update your profile records in the institution database">
+          <Card title="Personal Information" subtitle="Update your personal contact records">
             <form onSubmit={handleSaveProfile} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -143,7 +127,7 @@ export const StudentProfile: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Email Address
+                  Email Address (Immutable)
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -179,33 +163,26 @@ export const StudentProfile: React.FC = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Department
+                    Department (Institutional)
                   </label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  >
-                    <option value="Computer Science">Computer Science</option>
-                    <option value="Information Technology">Information Technology</option>
-                    <option value="Electronics & Communication">Electronics & Communication</option>
-                    <option value="Mechanical Engineering">Mechanical Engineering</option>
-                  </select>
+                  <input
+                    type="text"
+                    disabled
+                    value={studentRecord?.department || 'Computer Science'}
+                    className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 text-sm cursor-not-allowed"
+                  />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                     Semester
                   </label>
-                  <select
-                    value={semester}
-                    onChange={(e) => setSemester(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                      <option key={s} value={s}>Semester {s}</option>
-                    ))}
-                  </select>
+                  <input
+                    type="text"
+                    disabled
+                    value={`Semester ${studentRecord?.semester || 1}`}
+                    className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-slate-500 text-sm cursor-not-allowed"
+                  />
                 </div>
               </div>
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, Plus, Trash2, Edit3, Calendar, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Bell, Plus, Trash2 } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
@@ -28,7 +29,7 @@ export const AdminNotices: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('notices')
-        .select('*, author:profiles(*)')
+        .select('*, author:profiles(full_name)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -107,11 +108,6 @@ export const AdminNotices: React.FC = () => {
               : 'bg-rose-50 border-rose-200 text-rose-800'
           }`}
         >
-          {message.type === 'success' ? (
-            <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-600" />
-          ) : (
-            <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-600" />
-          )}
           <span>{message.text}</span>
         </div>
       )}
@@ -154,10 +150,16 @@ export const AdminNotices: React.FC = () => {
 
                 <h3 className="font-bold text-slate-900 text-base mb-2">{n.title}</h3>
 
-                {/* VULN-005 Notice HTML Render */}
+                {/* Secure V2: Sanitize rendered notice HTML */}
                 <div
                   className="text-xs text-slate-600 line-clamp-3 bg-slate-50 p-3 rounded-lg border border-slate-100 font-sans"
-                  dangerouslySetInnerHTML={{ __html: n.content }}
+                  dangerouslySetInnerHTML={{
+                    __html: DOMPurify.sanitize(n.content, {
+                      USE_PROFILES: { html: true },
+                      FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+                      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+                    }),
+                  }}
                 />
               </div>
 
@@ -232,7 +234,7 @@ export const AdminNotices: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-              Notice Body Content (HTML/Plain Text)
+              Notice Body Content
             </label>
             <textarea
               required

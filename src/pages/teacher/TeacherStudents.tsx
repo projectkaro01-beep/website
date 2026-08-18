@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Users, Search, Mail, Phone, BookOpen, GraduationCap, Building } from 'lucide-react';
+import { Users, Search, Mail } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
-import { Badge } from '../../components/ui/Badge';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
-import { Student } from '../../types';
 
 export const TeacherStudents: React.FC = () => {
   const { teacherRecord } = useAuth();
@@ -30,10 +28,19 @@ export const TeacherStudents: React.FC = () => {
 
         const subIds = (subs || []).map((s) => s.id);
 
-        // VULN-008: Fetching full profile metadata & contact details
+        // Secure V2: Data Minimization - Fetch only necessary academic directory fields (Fixes VULN-008)
         const { data: enrollmentsData } = await supabase
           .from('enrollments')
-          .select('student:students(*, profile:profiles(*)), subject:subjects(name, code)')
+          .select(`
+            student:students(
+              id,
+              enrollment_no,
+              department,
+              semester,
+              profile:profiles(full_name, email)
+            ),
+            subject:subjects(name, code)
+          `)
           .in('subject_id', subIds);
 
         // Group by student
@@ -113,16 +120,15 @@ export const TeacherStudents: React.FC = () => {
                   <th className="px-4 py-3">Student Name</th>
                   <th className="px-4 py-3">Enrollment No.</th>
                   <th className="px-4 py-3">Department & Sem</th>
-                  <th className="px-4 py-3">Contact (Exposed)</th>
+                  <th className="px-4 py-3">Academic Email</th>
                   <th className="px-4 py-3">Enrolled Course</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredStudents.map((stu) => (
                   <tr key={stu.id} className="hover:bg-slate-50/50">
-                    <td className="px-4 py-3.5">
-                      <div className="font-semibold text-slate-900">{stu.profile?.full_name}</div>
-                      <div className="text-xs text-slate-400 font-mono">ID: {stu.id}</div>
+                    <td className="px-4 py-3.5 font-semibold text-slate-900">
+                      {stu.profile?.full_name}
                     </td>
                     <td className="px-4 py-3.5 font-mono font-medium text-slate-700">
                       {stu.enrollment_no}
@@ -131,18 +137,11 @@ export const TeacherStudents: React.FC = () => {
                       <span className="text-slate-800">{stu.department}</span>
                       <span className="text-slate-400 block text-xs">Sem {stu.semester}</span>
                     </td>
-                    {/* VULN-008 Sensitive Data Exposure in UI/API */}
                     <td className="px-4 py-3.5 text-xs text-slate-600">
                       <div className="flex items-center gap-1.5">
                         <Mail className="w-3.5 h-3.5 text-slate-400" />
                         <span>{stu.profile?.email}</span>
                       </div>
-                      {stu.profile?.phone && (
-                        <div className="flex items-center gap-1.5 mt-0.5 text-slate-500">
-                          <Phone className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{stu.profile?.phone}</span>
-                        </div>
-                      )}
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex flex-wrap gap-1">

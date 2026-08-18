@@ -1,73 +1,46 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Award, Search, TrendingUp, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import { Award } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/Badge';
-import { Button } from '../../components/ui/Button';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { MarkRecord } from '../../types';
 
 export const StudentMarks: React.FC = () => {
-  const { studentRecord } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  // Target student_id defaults to logged-in student, but can be overridden via query param (VULN-002 IDOR)
-  const queryStudentId = searchParams.get('student_id') || studentRecord?.id || '';
-  const [targetStudentId, setTargetStudentId] = useState(queryStudentId);
+  const { profile, studentRecord } = useAuth();
   const [marks, setMarks] = useState<MarkRecord[]>([]);
-  const [studentInfo, setStudentInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'All' | 'Midterm' | 'Final' | 'Quiz' | 'Assignment'>('All');
 
-  const fetchMarksForStudent = async (stuId: string) => {
-    if (!stuId) return;
-    setLoading(true);
-
-    try {
-      // Fetch target student info
-      const { data: sInfo } = await supabase
-        .from('students')
-        .select('*, profile:profiles(*)')
-        .eq('id', stuId)
-        .single();
-      setStudentInfo(sInfo);
-
-      // VULN-002 / VULN-003: Direct query filtering solely on student_id without server-side ownership enforcement
-      const { data: marksData, error } = await supabase
-        .from('marks')
-        .select('*, subject:subjects(*)')
-        .eq('student_id', stuId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setMarks((marksData as MarkRecord[]) || []);
-    } catch (err) {
-      console.error('Error fetching marks:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Secure V2: Enforce strict lookup using authenticated user's student record (Fixes VULN-002 IDOR)
   useEffect(() => {
-    if (queryStudentId) {
-      setTargetStudentId(queryStudentId);
-      fetchMarksForStudent(queryStudentId);
-    } else if (studentRecord?.id) {
-      setTargetStudentId(studentRecord.id);
-      fetchMarksForStudent(studentRecord.id);
-    }
-  }, [queryStudentId, studentRecord]);
+    const fetchMyMarks = async () => {
+      if (!studentRecord?.id) {
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
 
-  const handleLookupSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (targetStudentId) {
-      setSearchParams({ student_id: targetStudentId });
-      fetchMarksForStudent(targetStudentId);
-    }
-  };
+      try {
+        const { data: marksData, error } = await supabase
+          .from('marks')
+          .select('*, subject:subjects(code, name)')
+          .eq('student_id', studentRecord.id)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        setMarks((marksData as MarkRecord[]) || []);
+      } catch (err) {
+        console.error('Error fetching marks:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMyMarks();
+  }, [studentRecord]);
 
   const filteredMarks =
     activeTab === 'All'
@@ -84,55 +57,15 @@ export const StudentMarks: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Academic Grades & Marks</h1>
           <p className="text-sm text-slate-500 mt-1">
-            Viewing records for:{' '}
-            <strong className="text-slate-800 font-semibold">
-              {studentInfo?.profile?.full_name || 'Loading student...'}
-            </strong>{' '}
-            ({studentInfo?.enrollment_no || 'N/A'})
+            Academic assessment records for{' '}
+            <strong className="text-slate-800 font-semibold">{profile?.full_name}</strong>{' '}
+            ({studentRecord?.enrollment_no || 'N/A'})
           </p>
         </div>
-
-        {/* Resource ID Lookup Form (Direct IDOR & RLS Testing Interface) */}
-        <form onSubmit={handleLookupSubmit} className="flex items-center gap-2">
-          <div className="relative">
-            <input
-              type="text"
-              value={targetStudentId}
-              onChange={(e) => setTargetStudentId(e.target.value)}
-              placeholder="Query Student ID (UUID)"
-              className="pl-3 pr-3 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 font-mono w-48 sm:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <Button type="submit" size="sm" variant="outline" icon={Search}>
-            Lookup
-          </Button>
-        </form>
       </div>
 
-      {/* Target Student Notice if viewing another student ID */}
-      {studentRecord?.id && targetStudentId && targetStudentId !== studentRecord.id && (
-        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <span>
-              Target identifier active: <strong className="font-mono">{targetStudentId}</strong>
-            </span>
-          </div>
-          <button
-            onClick={() => {
-              setSearchParams({});
-              setTargetStudentId(studentRecord.id);
-              fetchMarksForStudent(studentRecord.id);
-            }}
-            className="underline font-semibold hover:text-amber-900"
-          >
-            Reset to My Records
-          </button>
-        </div>
-      )}
-
       {loading ? (
-        <LoadingSpinner message="Retrieving grade reports..." />
+        <LoadingSpinner message="Retrieving your grade reports..." />
       ) : (
         <>
           {/* Summary Metric Cards */}
@@ -195,7 +128,7 @@ export const StudentMarks: React.FC = () => {
               <EmptyState
                 icon={Award}
                 title="No Marks Found"
-                description="No assessment marks match the selected category for this student."
+                description="No assessment marks match the selected category."
               />
             ) : (
               <div className="overflow-x-auto">

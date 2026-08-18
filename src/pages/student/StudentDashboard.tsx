@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, CalendarCheck, Award, Bell, ArrowRight, CheckCircle, Clock } from 'lucide-react';
+import { BookOpen, CalendarCheck, Award, Bell, ArrowRight } from 'lucide-react';
+import DOMPurify from 'dompurify';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { Card } from '../../components/ui/Card';
@@ -27,7 +28,7 @@ export const StudentDashboard: React.FC = () => {
         // 1. Fetch enrolled subjects
         const { data: enrollmentsData } = await supabase
           .from('enrollments')
-          .select('subject:subjects(*, teacher:teachers(*, profile:profiles(*)))')
+          .select('subject:subjects(*, teacher:teachers(*, profile:profiles(full_name, email)))')
           .eq('student_id', studentRecord.id);
 
         const subList = (enrollmentsData || []).map((e: any) => e.subject).filter(Boolean);
@@ -36,7 +37,7 @@ export const StudentDashboard: React.FC = () => {
         // 2. Fetch attendance
         const { data: attData } = await supabase
           .from('attendance')
-          .select('*, subject:subjects(*)')
+          .select('*, subject:subjects(code, name)')
           .eq('student_id', studentRecord.id)
           .order('date', { ascending: false });
         setAttendance((attData as AttendanceRecord[]) || []);
@@ -44,14 +45,14 @@ export const StudentDashboard: React.FC = () => {
         // 3. Fetch marks
         const { data: marksData } = await supabase
           .from('marks')
-          .select('*, subject:subjects(*)')
+          .select('*, subject:subjects(code, name)')
           .eq('student_id', studentRecord.id);
         setMarks((marksData as MarkRecord[]) || []);
 
-        // 4. Fetch notices (targeted to all or student)
+        // 4. Fetch notices
         const { data: noticesData } = await supabase
           .from('notices')
-          .select('*, author:profiles(*)')
+          .select('*, author:profiles(full_name)')
           .in('target_role', ['all', 'student'])
           .order('created_at', { ascending: false })
           .limit(5);
@@ -70,12 +71,10 @@ export const StudentDashboard: React.FC = () => {
     return <LoadingSpinner message="Loading your student overview..." />;
   }
 
-  // Calculate attendance percentage
   const totalClasses = attendance.length;
   const presentClasses = attendance.filter((a) => a.status === 'Present').length;
   const attendancePct = totalClasses > 0 ? Math.round((presentClasses / totalClasses) * 100) : 100;
 
-  // Calculate average marks
   const totalMarksEarned = marks.reduce((acc, m) => acc + Number(m.score), 0);
   const totalMaxMarks = marks.reduce((acc, m) => acc + Number(m.max_score), 0);
   const avgMarksPct = totalMaxMarks > 0 ? Math.round((totalMarksEarned / totalMaxMarks) * 100) : 0;
@@ -256,10 +255,16 @@ export const StudentDashboard: React.FC = () => {
                       </span>
                     </div>
                     <h5 className="font-semibold text-sm text-slate-800">{notice.title}</h5>
-                    {/* VULN-005 preview */}
+                    {/* Secure V2: Sanitize HTML */}
                     <div
                       className="text-xs text-slate-600 mt-1 line-clamp-2"
-                      dangerouslySetInnerHTML={{ __html: notice.content }}
+                      dangerouslySetInnerHTML={{
+                        __html: DOMPurify.sanitize(notice.content, {
+                          USE_PROFILES: { html: true },
+                          FORBID_TAGS: ['script', 'iframe', 'object', 'embed'],
+                          FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+                        }),
+                      }}
                     />
                   </div>
                 ))}
